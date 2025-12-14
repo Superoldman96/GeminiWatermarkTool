@@ -1,10 +1,10 @@
 {
   "name": "gemini-watermark-tool",
-  "version": "0.1.0",
-  "description": "A tool to add/remove Gemini-style visible watermarks using Screen/Colour Burn blend modes",
-  "homepage": "https://github.com/allenk/gemini-watermark-tool",
+  "version": "0.1.1",
+  "description": "A tool to add/remove Gemini-style visible watermarks using reverse alpha blending",
+  "homepage": "https://github.com/allenk/GeminiWatermarkTool",
   "license": "MIT",
-  "supports": "windows & x64",
+  "supports": "(windows & x64) | (linux & x64) | (osx & (x64 | arm64)) | android",
   "dependencies": [
     {
       "name": "opencv4",

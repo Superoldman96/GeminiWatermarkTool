@@ -38,26 +38,47 @@
 
 #include <filesystem>
 #include <iostream>
+#include <algorithm>
+#include <string>
+#include <cstdlib>
 
+// =============================================================================
+// Platform-specific includes
+// =============================================================================
 #ifdef _WIN32
-#include <windows.h>
+    #include <windows.h>
 #endif
 
 namespace fs = std::filesystem;
 
-// Enable UTF-8 console output on Windows
+// =============================================================================
+// Platform-specific console setup
+// =============================================================================
+
+/**
+ * Setup console for proper UTF-8 and ANSI color support
+ */
 void setup_console() {
 #ifdef _WIN32
+    // Set console output to UTF-8
     SetConsoleOutputCP(CP_UTF8);
-    // Enable ANSI escape sequences for colors
+    
+    // Enable ANSI escape sequences for colors (Windows 10+)
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    DWORD dwMode = 0;
-    GetConsoleMode(hOut, &dwMode);
-    dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-    SetConsoleMode(hOut, dwMode);
+    if (hOut != INVALID_HANDLE_VALUE) {
+        DWORD dwMode = 0;
+        if (GetConsoleMode(hOut, &dwMode)) {
+            dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+            SetConsoleMode(hOut, dwMode);
+        }
+    }
 #endif
+    // Unix-like systems (Linux, macOS) support ANSI by default
 }
 
+// =============================================================================
+// Logo and Banner printing
+// =============================================================================
 void print_logo() {
     fmt::print(fmt::fg(fmt::color::cyan), "{}", gwt::ASCII_COMPACT);
     fmt::print(fmt::fg(fmt::color::yellow), "  [Standalone Edition]");
@@ -118,7 +139,7 @@ int run_simple_mode(const std::string& filepath) {
 
         // Process in-place (input == output), no force_size
         if (gwt::process_image(input, input, true, engine, std::nullopt)) {
-            fmt::print(fmt::fg(fmt::color::green), "✓ Success: {}\n", input.string());
+            fmt::print(fmt::fg(fmt::color::green), "[OK] Success: {}\n", input.string());
             return 0;
         } else {
             return 1;
@@ -252,8 +273,7 @@ int main(int argc, char** argv) {
                 }
             }
 
-            fmt::print(fmt::fg(fmt::color::green),
-                "\n✓ Completed: {} succeeded", success_count);
+            fmt::print(fmt::fg(fmt::color::green), "\n[OK] Completed: {} succeeded", success_count);
             if (fail_count > 0) {
                 fmt::print(fmt::fg(fmt::color::red), ", {} failed", fail_count);
             }
@@ -263,7 +283,7 @@ int main(int argc, char** argv) {
             // Single file processing - pass force_size
             if (gwt::process_image(input, output, remove_mode, engine, force_size)) {
                 success_count = 1;
-                fmt::print(fmt::fg(fmt::color::green), "✓ Success: {}\n", output.string());
+                fmt::print(fmt::fg(fmt::color::green), "[OK] Success: {}\n", output.string());
             } else {
                 fail_count = 1;
             }
