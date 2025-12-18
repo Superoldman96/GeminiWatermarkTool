@@ -201,10 +201,6 @@ endif()
 # =============================================================================
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
 
-if(NOT STANDALONE_MODE AND NOT ANDROID)
-    install(DIRECTORY assets/ DESTINATION bin/assets)
-endif()
-
 # =============================================================================
 # Configuration Summary
 # =============================================================================
