@@ -34,6 +34,48 @@ Best for: **slides, documents, UI screenshots, diagrams, logos**.
 Generative inpainting often breaks text: warped edges, wrong spacing, invented strokes.  
 GeminiWatermarkTool reverses the blending equation to recover pixels, keeping text crisp.
 
+---
+
+## ⚠️ About SynthID (Invisible Watermark)
+
+> **Important**: This tool removes **visible watermarks only**. It does NOT remove SynthID.
+
+### What is SynthID?
+
+SynthID is Google DeepMind's **invisible watermarking** technology embedded in AI-generated images. Unlike visible watermarks:
+
+- **Invisible** to human eyes
+- **Integrated** during generation (not added afterward)  
+- **Extremely robust** against common image manipulations
+
+### Why Can't SynthID Be Removed?
+
+Our extensive research revealed a fundamental truth:
+
+> **SynthID is not a watermark added to an image — it IS the image.**
+
+SynthID operates as a **Statistical Bias** during generation. Every pixel choice is subtly influenced by Google's private key using **Tournament Sampling**. The watermark and visual content are **inseparably bound**.
+
+```
+Visible Watermark:  Image + Overlay = Result     ✓ Removable (this tool)
+SynthID:            Biased Generation = Image    ✗ Cannot separate
+```
+
+### Potential Removal Approaches
+
+| Approach | Trade-off | Feasibility |
+|----------|-----------|-------------|
+| **Extreme Quantization** (binarization) | Image becomes unusable skeleton | ✓ Works |
+| **AI Repaint** (Stable Diffusion, etc.) | Style changes significantly | ✓ Works |
+| **White-box Adversarial Attack** | Requires detector model | ✗ Not available |
+
+**Conclusion**: Removing SynthID while preserving image quality is **currently not feasible**.
+
+📄 **[Full SynthID Research Report →](report/synthid_research.md)**
+- [SynthID Image Watermark Research Report](https://allenkuo.medium.com/synthid-image-watermark-research-report-9b864b19f9cf)
+
+---
+
 ## Download
 
 Download the latest release from the [Releases](https://github.com/allenk/GeminiWatermarkTool/releases) page.
@@ -224,7 +266,7 @@ Make sure the output path is writable and the file isn't open in another program
 ## Limitations
 
 - Only removes **Gemini visible watermarks** (the semi-transparent logo in bottom-right)
-- Does not remove invisible/steganographic watermarks
+- Does **NOT** remove **SynthID invisible watermarks** — [see why](report/synthid_research.md)
 - Designed for Gemini's current watermark pattern (as of 2025)
 
 ---
@@ -351,6 +393,8 @@ gemini-watermark-tool/
 │   ├── blend_modes.cpp         # Alpha blending algorithms
 │   ├── blend_modes.hpp
 │   └── ascii_logo.hpp          # ASCII art banner
+├── report/
+│   └── synthid_research.md     # SynthID research documentation
 └── resources/
     ├── app.ico                 # Windows application icon
     └── app.rc.in               # Windows resource template
@@ -417,6 +461,8 @@ MIT License
 ## Related
 
 - [Removing Gemini AI Watermarks: A Deep Dive into Reverse Alpha Blending](https://allenkuo.medium.com/removing-gemini-ai-watermarks-a-deep-dive-into-reverse-alpha-blending-bbbd83af2a3f)
+- [SynthID Image Watermark Research Report](https://allenkuo.medium.com/synthid-image-watermark-research-report-9b864b19f9cf)
+- [SynthID Research Report](report/synthid_research.md) — Why invisible watermarks cannot be removed
 
 ---
 

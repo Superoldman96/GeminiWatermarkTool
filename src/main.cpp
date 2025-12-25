@@ -62,7 +62,7 @@ void setup_console() {
 #ifdef _WIN32
     // Set console output to UTF-8
     SetConsoleOutputCP(CP_UTF8);
-    
+
     // Enable ANSI escape sequences for colors (Windows 10+)
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     if (hOut != INVALID_HANDLE_VALUE) {
