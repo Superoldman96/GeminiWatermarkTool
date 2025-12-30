@@ -131,7 +131,7 @@ SynthID operates as a **parasite of entropy**:
                       △
                      / \
                     /   \
-                   /  ❌  \
+                   /  X  \
                   / Cannot\
                  / achieve \
                 /   all 3   \
