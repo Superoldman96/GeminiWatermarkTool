@@ -6,7 +6,9 @@
  */
 
 #include "gui/app/app_controller.hpp"
+#include "core/watermark_detector.hpp"
 #include "embedded_assets.hpp"
+#include "utils/path_formatter.hpp"
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -45,31 +47,37 @@ AppController::~AppController() {
 // =============================================================================
 
 bool AppController::load_image(const std::filesystem::path& path) {
-    spdlog::info("Loading image: {}", path.string());
-
+    spdlog::info("Loading image: {}", path);
+    
     // Read image first to validate
     cv::Mat image = cv::imread(path.string(), cv::IMREAD_COLOR);
     if (image.empty()) {
         m_state.state = ProcessState::Error;
-        m_state.error_message = "Failed to load image: " + path.string();
+        m_state.error_message = "Failed to load image: " + to_utf8(path);
         m_state.status_message = "Load failed";
         spdlog::error("{}", m_state.error_message);
         return false;
     }
-
+    
     // Clean up old state completely (including texture)
     if (m_state.preview_texture.valid()) {
         m_backend.destroy_texture(m_state.preview_texture);
         m_state.preview_texture = TextureHandle{};
     }
     m_state.reset();
-
+    
     // Update state with new image
     m_state.image.file_path = path;
     m_state.image.original = image;
     m_state.image.width = image.cols;
     m_state.image.height = image.rows;
     m_state.image.channels = image.channels();
+
+
+    // Run auto-detection when entering custom mode
+    if (m_state.process_options.size_mode == WatermarkSizeMode::Custom && m_state.image.has_image()) {
+        detect_custom_watermark();
+    }
 
     // Detect watermark info
     update_watermark_info();
@@ -90,12 +98,12 @@ bool AppController::load_image(const std::filesystem::path& path) {
 
 bool AppController::save_image(const std::filesystem::path& path) {
     if (!m_state.can_save()) {
-        spdlog::warn("No processed image to save");
+        spdlog::warn("No image to save");
         return false;
     }
-
-    spdlog::info("Saving image: {}", path.string());
-
+    
+    spdlog::info("Saving image: {}", path);
+    
     // Determine output format and quality
     std::vector<int> params;
     std::string ext = path.extension().string();
@@ -114,15 +122,15 @@ bool AppController::save_image(const std::filesystem::path& path) {
     if (!output_dir.empty() && !std::filesystem::exists(output_dir)) {
         std::filesystem::create_directories(output_dir);
     }
-
-    // Write image
-    bool success = cv::imwrite(path.string(), m_state.image.processed, params);
-
+    
+    // Write currently displayed image (WYSIWYG - What You See Is What You Get)
+    bool success = cv::imwrite(path.string(), m_state.image.display, params);
+    
     if (success) {
-        m_state.status_message = "Saved: " + path.filename().string();
-        spdlog::info("Image saved: {}", path.string());
+        m_state.status_message = "Saved: " + filename_utf8(path);
+        spdlog::info("Image saved: {}", path);
     } else {
-        m_state.error_message = "Failed to save: " + path.string();
+        m_state.error_message = "Failed to save: " + to_utf8(path);
         m_state.status_message = "Save failed";
         spdlog::error("{}", m_state.error_message);
     }
@@ -158,19 +166,38 @@ void AppController::process_current() {
         // Clone original for processing
         m_state.image.processed = m_state.image.original.clone();
 
+        bool is_custom = (m_state.process_options.size_mode == WatermarkSizeMode::Custom) &&
+                         m_state.custom_watermark.has_region;
+
         // Apply watermark operation
         if (m_state.process_options.remove_mode) {
-            m_engine->remove_watermark(
-                m_state.image.processed,
-                m_state.process_options.force_size
-            );
-            spdlog::info("Watermark removed");
+            if (is_custom) {
+                m_engine->remove_watermark_custom(
+                    m_state.image.processed,
+                    m_state.custom_watermark.region
+                );
+                spdlog::info("Watermark removed (custom region)");
+            } else {
+                m_engine->remove_watermark(
+                    m_state.image.processed,
+                    m_state.process_options.force_size
+                );
+                spdlog::info("Watermark removed");
+            }
         } else {
-            m_engine->add_watermark(
-                m_state.image.processed,
-                m_state.process_options.force_size
-            );
-            spdlog::info("Watermark added");
+            if (is_custom) {
+                m_engine->add_watermark_custom(
+                    m_state.image.processed,
+                    m_state.custom_watermark.region
+                );
+                spdlog::info("Watermark added (custom region)");
+            } else {
+                m_engine->add_watermark(
+                    m_state.image.processed,
+                    m_state.process_options.force_size
+                );
+                spdlog::info("Watermark added");
+            }
         }
 
         // Show processed result
@@ -213,16 +240,116 @@ void AppController::set_force_size(std::optional<WatermarkSize> size) {
     m_state.process_options.force_size = size;
 
     if (size) {
+        m_state.process_options.size_mode = (*size == WatermarkSize::Small)
+            ? WatermarkSizeMode::Small
+            : WatermarkSizeMode::Large;
         spdlog::debug("Force size: {}",
                       *size == WatermarkSize::Small ? "48x48" : "96x96");
     } else {
+        m_state.process_options.size_mode = WatermarkSizeMode::Auto;
         spdlog::debug("Force size: Auto");
     }
+
+    // Clear custom state when switching away from custom
+    m_state.custom_watermark.clear();
 
     // Re-detect watermark info if image loaded
     if (m_state.image.has_image()) {
         update_watermark_info();
     }
+}
+
+void AppController::set_size_mode(WatermarkSizeMode mode) {
+    m_state.process_options.size_mode = mode;
+
+    switch (mode) {
+        case WatermarkSizeMode::Auto:
+            m_state.process_options.force_size = std::nullopt;
+            m_state.custom_watermark.clear();
+            break;
+        case WatermarkSizeMode::Small:
+            m_state.process_options.force_size = WatermarkSize::Small;
+            m_state.custom_watermark.clear();
+            break;
+        case WatermarkSizeMode::Large:
+            m_state.process_options.force_size = WatermarkSize::Large;
+            m_state.custom_watermark.clear();
+            break;
+        case WatermarkSizeMode::Custom:
+            m_state.process_options.force_size = std::nullopt;
+            // Run auto-detection when entering custom mode
+            if (m_state.image.has_image() && !m_state.custom_watermark.detection_attempted) {
+                detect_custom_watermark();
+            }
+            break;
+    }
+
+    // Re-detect watermark info
+    if (m_state.image.has_image()) {
+        update_watermark_info();
+    }
+
+    spdlog::debug("Size mode set to: {}", static_cast<int>(mode));
+}
+
+void AppController::set_custom_region(const cv::Rect& region) {
+    // Clamp to image bounds
+    cv::Rect clamped = region & cv::Rect(0, 0, m_state.image.width, m_state.image.height);
+
+    if (clamped.width < 4 || clamped.height < 4) {
+        spdlog::warn("Custom region too small: {}x{}", clamped.width, clamped.height);
+        return;
+    }
+
+    m_state.custom_watermark.region = clamped;
+    m_state.custom_watermark.has_region = true;
+    m_state.process_options.custom_region = clamped;
+
+    // Update watermark info to reflect custom region
+    update_watermark_info();
+
+    //spdlog::info("Custom watermark region set: ({},{}) {}x{}",
+    //             clamped.x, clamped.y, clamped.width, clamped.height);
+}
+
+void AppController::detect_custom_watermark() {
+    if (!m_state.image.has_image()) return;
+
+    m_state.custom_watermark.detection_attempted = true;
+    m_state.status_message = "Detecting watermark...";
+
+    // Run detection
+    auto result = detect_watermark_region(m_state.image.original);
+
+    if (result) {
+        m_state.custom_watermark.region = result->region;
+        m_state.custom_watermark.has_region = true;
+        m_state.custom_watermark.detection_confidence = result->confidence;
+        m_state.process_options.custom_region = result->region;
+
+        m_state.status_message = fmt::format("Detected watermark ({:.0f}% confidence)",
+                                              result->confidence * 100.0f);
+
+        spdlog::info("Auto-detected watermark: ({},{}) {}x{} confidence={:.2f}",
+                     result->region.x, result->region.y,
+                     result->region.width, result->region.height,
+                     result->confidence);
+    } else {
+        // Fallback to default position
+        cv::Rect fallback = get_fallback_watermark_region(
+            m_state.image.width, m_state.image.height);
+
+        m_state.custom_watermark.region = fallback;
+        m_state.custom_watermark.has_region = true;
+        m_state.custom_watermark.detection_confidence = 0.0f;
+        m_state.process_options.custom_region = fallback;
+
+        m_state.status_message = "No watermark detected, using default position";
+        spdlog::info("Detection failed, using fallback: ({},{}) {}x{}",
+                     fallback.x, fallback.y, fallback.width, fallback.height);
+    }
+
+    update_watermark_info();
 }
 
 void AppController::toggle_preview() {
@@ -371,7 +498,28 @@ void AppController::update_watermark_info() {
     int w = m_state.image.width;
     int h = m_state.image.height;
 
-    // Use forced size or auto-detect
+    // Custom mode uses custom_watermark state
+    if (m_state.process_options.size_mode == WatermarkSizeMode::Custom &&
+        m_state.custom_watermark.has_region) {
+
+        const auto& cr = m_state.custom_watermark.region;
+        WatermarkInfo info;
+        info.is_custom = true;
+        info.position = cv::Point(cr.x, cr.y);
+        info.region = cr;
+        // Set size hint based on dimensions
+        info.size = (cr.width <= 48 && cr.height <= 48)
+            ? WatermarkSize::Small
+            : WatermarkSize::Large;
+
+        m_state.watermark_info = info;
+
+        spdlog::debug("Custom watermark info: {}x{} at ({}, {})",
+                      cr.width, cr.height, cr.x, cr.y);
+        return;
+    }
+
+    // Standard mode: Use forced size or auto-detect
     WatermarkSize size = m_state.process_options.force_size.value_or(
         get_watermark_size(w, h)
     );
@@ -392,6 +540,7 @@ void AppController::update_watermark_info() {
     info.size = size;
     info.position = pos;
     info.region = cv::Rect(pos.x, pos.y, config.logo_size, config.logo_size);
+    info.is_custom = false;
 
     m_state.watermark_info = info;
 

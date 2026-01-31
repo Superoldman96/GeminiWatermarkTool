@@ -9,8 +9,13 @@
 
 #include <imgui.h>
 #include <algorithm>
+#include <cmath>
 
 namespace gwt::gui {
+
+// Anchor handle size in screen pixels
+static constexpr float ANCHOR_SIZE = 6.0f;
+static constexpr float ANCHOR_HIT_RADIUS = 10.0f;
 
 ImagePreview::ImagePreview(AppController& controller)
     : m_controller(controller)
@@ -54,6 +59,29 @@ void ImagePreview::render_placeholder() {
     draw_list->AddRect(p_min, p_max, IM_COL32(128, 128, 128, 128), 0, 0, 1.0f);
 }
 
+// =============================================================================
+// Coordinate conversion
+// =============================================================================
+
+ImVec2 ImagePreview::image_to_screen(float ix, float iy) const {
+    return ImVec2(
+        m_image_screen_pos.x + ix * m_final_scale,
+        m_image_screen_pos.y + iy * m_final_scale
+    );
+}
+
+ImVec2 ImagePreview::screen_to_image(float sx, float sy) const {
+    if (m_final_scale < 1e-6f) return ImVec2(0, 0);
+    return ImVec2(
+        (sx - m_image_screen_pos.x) / m_final_scale,
+        (sy - m_image_screen_pos.y) / m_final_scale
+    );
+}
+
+// =============================================================================
+// Main render
+// =============================================================================
+
 void ImagePreview::render_image() {
     auto& state = m_controller.state();
     auto& opts = state.preview_options;
@@ -61,34 +89,37 @@ void ImagePreview::render_image() {
     void* tex_id = m_controller.get_preview_texture_id();
     if (!tex_id) return;
 
-    // Get viewport size before creating scrolling region
-    ImVec2 viewport_size = ImGui::GetContentRegionAvail();
+    // Get available space for the scrolling region
+    ImVec2 avail_for_child = ImGui::GetContentRegionAvail();
     ImVec2 viewport_start = ImGui::GetCursorScreenPos();
 
-    // Calculate image display size
+    // Image dimensions
     float img_w = static_cast<float>(state.image.width);
     float img_h = static_cast<float>(state.image.height);
+    
+    // Create scrollable region first, then get actual content region inside
+    ImGuiWindowFlags scroll_flags = ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::BeginChild("ImageScrollRegion", avail_for_child, false, scroll_flags);
 
-    // Base scale: fit to viewport
+    // Get actual viewport size INSIDE the child window (accounts for scrollbar)
+    ImVec2 viewport_size = ImGui::GetContentRegionAvail();
+
+    // Base scale: fit to actual viewport (no extra space)
     float scale_x = viewport_size.x / img_w;
     float scale_y = viewport_size.y / img_h;
     float base_scale = std::min(scale_x, scale_y);
 
     // Apply zoom
-    float final_scale = base_scale * opts.zoom;
-    float display_w = img_w * final_scale;
-    float display_h = img_h * final_scale;
+    m_final_scale = base_scale * opts.zoom;
+    float display_w = img_w * m_final_scale;
+    float display_h = img_h * m_final_scale;
 
-    // Calculate content size for scrolling
-    float padding = 20.0f;
-    float content_w = std::max(display_w + padding * 2, viewport_size.x);
-    float content_h = std::max(display_h + padding * 2, viewport_size.y);
+    // Content size equals display size when zoomed, viewport size when fit
+    // This ensures no scrollbar at zoom=1.0
+    float content_w = std::max(display_w, viewport_size.x);
+    float content_h = std::max(display_h, viewport_size.y);
 
-    // Create scrollable region
-    ImGuiWindowFlags scroll_flags = ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
-    ImGui::BeginChild("ImageScrollRegion", viewport_size, false, scroll_flags);
-
-    // Set content size using SetCursorPos instead of Dummy
+    // Set content size for scrolling
     ImGui::SetCursorPos(ImVec2(content_w, content_h));
 
     // Calculate image position (centered in content area)
@@ -99,55 +130,60 @@ void ImagePreview::render_image() {
     float scroll_x = ImGui::GetScrollX();
     float scroll_y = ImGui::GetScrollY();
 
-    // Calculate screen position
+    // Calculate screen position and cache for coordinate conversion
     ImVec2 child_pos = ImGui::GetWindowPos();
-    ImVec2 image_screen_pos(
+    m_image_screen_pos = ImVec2(
         child_pos.x + image_x - scroll_x,
         child_pos.y + image_y - scroll_y
     );
 
-    // Draw image using DrawList (allows drawing outside normal flow)
+    // Draw image using DrawList
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-    ImVec2 uv_min(0, 0);
-    ImVec2 uv_max(1, 1);
-    ImU32 tint = IM_COL32_WHITE;
 
     draw_list->AddImage(
         reinterpret_cast<ImTextureID>(tex_id),
-        image_screen_pos,
-        ImVec2(image_screen_pos.x + display_w, image_screen_pos.y + display_h),
-        uv_min, uv_max, tint
+        m_image_screen_pos,
+        ImVec2(m_image_screen_pos.x + display_w, m_image_screen_pos.y + display_h),
+        ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE
     );
 
     // Draw watermark overlay
-    if (opts.highlight_watermark && state.watermark_info) {
+    bool is_custom_mode = (state.process_options.size_mode == WatermarkSizeMode::Custom);
+
+    if (is_custom_mode && state.custom_watermark.has_region) {
+        // Custom mode: draw resizable rect with anchors
+        draw_custom_rect_with_anchors(draw_list);
+    } else if (opts.highlight_watermark && state.watermark_info) {
+        // Standard mode: draw simple highlight rect
         const auto& info = *state.watermark_info;
 
-        float wm_x = image_screen_pos.x + info.position.x * final_scale;
-        float wm_y = image_screen_pos.y + info.position.y * final_scale;
-        float wm_w = info.width() * final_scale;
-        float wm_h = info.height() * final_scale;
+        ImVec2 wm_tl = image_to_screen(
+            static_cast<float>(info.position.x),
+            static_cast<float>(info.position.y));
+        ImVec2 wm_br = image_to_screen(
+            static_cast<float>(info.position.x + info.width()),
+            static_cast<float>(info.position.y + info.height()));
 
         ImU32 color = opts.show_processed
             ? IM_COL32(0, 255, 0, 180)
             : IM_COL32(255, 100, 100, 180);
 
-        draw_list->AddRect(
-            ImVec2(wm_x, wm_y),
-            ImVec2(wm_x + wm_w, wm_y + wm_h),
-            color, 0, 0, 2.0f
-        );
+        draw_list->AddRect(wm_tl, wm_br, color, 0, 0, 2.0f);
 
         const char* label = opts.show_processed ? "Removed" : "Watermark";
         draw_list->AddText(
-            ImVec2(wm_x, wm_y - ImGui::GetTextLineHeight() - 2),
+            ImVec2(wm_tl.x, wm_tl.y - ImGui::GetTextLineHeight() - 2),
             color, label
         );
     }
 
-    // Handle input at the end (after content is set up)
+    // Handle input
     handle_input(viewport_size, content_w, content_h);
+
+    // Handle custom rect interaction (must be after handle_input for pan priority)
+    if (is_custom_mode) {
+        handle_custom_rect_interaction();
+    }
 
     ImGui::EndChild();
 
@@ -158,16 +194,296 @@ void ImagePreview::render_image() {
                 opts.show_processed ? "Processed" : "Original");
 }
 
+// =============================================================================
+// Custom watermark rect drawing
+// =============================================================================
+
+void ImagePreview::draw_custom_rect_with_anchors(ImDrawList* draw_list) {
+    auto& state = m_controller.state();
+    const auto& cr = state.custom_watermark.region;
+
+    float x = static_cast<float>(cr.x);
+    float y = static_cast<float>(cr.y);
+    float w = static_cast<float>(cr.width);
+    float h = static_cast<float>(cr.height);
+
+    ImVec2 tl = image_to_screen(x, y);
+    ImVec2 br = image_to_screen(x + w, y + h);
+    ImVec2 tr = ImVec2(br.x, tl.y);
+    ImVec2 bl = ImVec2(tl.x, br.y);
+    ImVec2 tc = ImVec2((tl.x + br.x) * 0.5f, tl.y);
+    ImVec2 bc = ImVec2((tl.x + br.x) * 0.5f, br.y);
+    ImVec2 ml = ImVec2(tl.x, (tl.y + br.y) * 0.5f);
+    ImVec2 mr = ImVec2(br.x, (tl.y + br.y) * 0.5f);
+
+    // Color based on state
+    ImU32 rect_color = state.custom_watermark.is_drawing
+        ? IM_COL32(255, 255, 0, 200)      // Yellow while drawing
+        : IM_COL32(0, 200, 255, 200);     // Cyan for custom region
+    ImU32 fill_color = IM_COL32(0, 200, 255, 30);
+    ImU32 anchor_color = IM_COL32(255, 255, 255, 255);
+    ImU32 anchor_border = IM_COL32(0, 100, 200, 255);
+
+    // Semi-transparent fill
+    draw_list->AddRectFilled(tl, br, fill_color);
+
+    // Border
+    draw_list->AddRect(tl, br, rect_color, 0, 0, 2.0f);
+
+    // Label
+    const char* label = "Custom Watermark";
+    draw_list->AddText(
+        ImVec2(tl.x, tl.y - ImGui::GetTextLineHeight() - 2),
+        rect_color, label
+    );
+
+    // Size label inside
+    char size_text[64];
+    snprintf(size_text, sizeof(size_text), "%dx%d", cr.width, cr.height);
+    ImVec2 size_text_sz = ImGui::CalcTextSize(size_text);
+    draw_list->AddText(
+        ImVec2((tl.x + br.x - size_text_sz.x) * 0.5f,
+               (tl.y + br.y - size_text_sz.y) * 0.5f),
+        IM_COL32(255, 255, 255, 200), size_text
+    );
+
+    // Don't draw anchors while actively drawing
+    if (state.custom_watermark.is_drawing) return;
+
+    // Draw anchor points (8 points: corners + edge midpoints)
+    auto draw_anchor = [&](ImVec2 pos) {
+        draw_list->AddRectFilled(
+            ImVec2(pos.x - ANCHOR_SIZE, pos.y - ANCHOR_SIZE),
+            ImVec2(pos.x + ANCHOR_SIZE, pos.y + ANCHOR_SIZE),
+            anchor_color
+        );
+        draw_list->AddRect(
+            ImVec2(pos.x - ANCHOR_SIZE, pos.y - ANCHOR_SIZE),
+            ImVec2(pos.x + ANCHOR_SIZE, pos.y + ANCHOR_SIZE),
+            anchor_border, 0, 0, 1.0f
+        );
+    };
+
+    draw_anchor(tl);
+    draw_anchor(tc);
+    draw_anchor(tr);
+    draw_anchor(ml);
+    draw_anchor(mr);
+    draw_anchor(bl);
+    draw_anchor(bc);
+    draw_anchor(br);
+}
+
+// =============================================================================
+// Anchor hit testing
+// =============================================================================
+
+AnchorPoint ImagePreview::hit_test_anchor(const ImVec2& mouse_pos, const cv::Rect& rect) const {
+    float x = static_cast<float>(rect.x);
+    float y = static_cast<float>(rect.y);
+    float w = static_cast<float>(rect.width);
+    float h = static_cast<float>(rect.height);
+
+    struct AnchorDef {
+        float ix, iy;
+        AnchorPoint point;
+    };
+
+    AnchorDef anchors[] = {
+        {x,           y,           AnchorPoint::TopLeft},
+        {x + w * 0.5f, y,          AnchorPoint::Top},
+        {x + w,       y,           AnchorPoint::TopRight},
+        {x,           y + h * 0.5f, AnchorPoint::Left},
+        {x + w,       y + h * 0.5f, AnchorPoint::Right},
+        {x,           y + h,       AnchorPoint::BottomLeft},
+        {x + w * 0.5f, y + h,      AnchorPoint::Bottom},
+        {x + w,       y + h,       AnchorPoint::BottomRight},
+    };
+
+    float hit_radius = ANCHOR_HIT_RADIUS;
+
+    for (const auto& a : anchors) {
+        ImVec2 screen_pos = image_to_screen(a.ix, a.iy);
+        float dx = mouse_pos.x - screen_pos.x;
+        float dy = mouse_pos.y - screen_pos.y;
+        if (dx * dx + dy * dy < hit_radius * hit_radius) {
+            return a.point;
+        }
+    }
+
+    // Test body (inside rect)
+    ImVec2 tl_scr = image_to_screen(x, y);
+    ImVec2 br_scr = image_to_screen(x + w, y + h);
+    if (mouse_pos.x >= tl_scr.x && mouse_pos.x <= br_scr.x &&
+        mouse_pos.y >= tl_scr.y && mouse_pos.y <= br_scr.y) {
+        return AnchorPoint::Body;
+    }
+
+    return AnchorPoint::None;
+}
+
+// =============================================================================
+// Custom rect interaction
+// =============================================================================
+
+void ImagePreview::handle_custom_rect_interaction() {
+    auto& state = m_controller.state();
+    auto& cw = state.custom_watermark;
+
+    ImGuiIO& io = ImGui::GetIO();
+    bool is_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+
+    // Skip if panning (space/alt/middle mouse)
+    bool space_held = ImGui::IsKeyDown(ImGuiKey_Space);
+    if (space_held || io.KeyAlt || ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+        return;
+    }
+
+    ImVec2 mouse_pos = io.MousePos;
+    ImVec2 image_pos = screen_to_image(mouse_pos.x, mouse_pos.y);
+
+    if (cw.has_region && !cw.is_drawing) {
+        // === Existing rect: handle resize/drag ===
+
+        if (!cw.is_resizing) {
+            // Hover: show appropriate cursor
+            AnchorPoint hit = hit_test_anchor(mouse_pos, cw.region);
+
+            switch (hit) {
+                case AnchorPoint::TopLeft:
+                case AnchorPoint::BottomRight:
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE); break;
+                case AnchorPoint::TopRight:
+                case AnchorPoint::BottomLeft:
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW); break;
+                case AnchorPoint::Top:
+                case AnchorPoint::Bottom:
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS); break;
+                case AnchorPoint::Left:
+                case AnchorPoint::Right:
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW); break;
+                case AnchorPoint::Body:
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll); break;
+                default: break;
+            }
+
+            // Start drag/resize on click
+            if (is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hit != AnchorPoint::None) {
+                cw.is_resizing = true;
+                cw.active_anchor = hit;
+                cw.drag_start = cv::Point(static_cast<int>(image_pos.x), static_cast<int>(image_pos.y));
+                cw.drag_start_rect = cw.region;
+            }
+        }
+
+        if (cw.is_resizing) {
+            int dx = static_cast<int>(image_pos.x) - cw.drag_start.x;
+            int dy = static_cast<int>(image_pos.y) - cw.drag_start.y;
+
+            cv::Rect r = cw.drag_start_rect;
+
+            switch (cw.active_anchor) {
+                case AnchorPoint::Body:
+                    r.x += dx; r.y += dy; break;
+                case AnchorPoint::TopLeft:
+                    r.x += dx; r.y += dy; r.width -= dx; r.height -= dy; break;
+                case AnchorPoint::Top:
+                    r.y += dy; r.height -= dy; break;
+                case AnchorPoint::TopRight:
+                    r.y += dy; r.width += dx; r.height -= dy; break;
+                case AnchorPoint::Left:
+                    r.x += dx; r.width -= dx; break;
+                case AnchorPoint::Right:
+                    r.width += dx; break;
+                case AnchorPoint::BottomLeft:
+                    r.x += dx; r.width -= dx; r.height += dy; break;
+                case AnchorPoint::Bottom:
+                    r.height += dy; break;
+                case AnchorPoint::BottomRight:
+                    r.width += dx; r.height += dy; break;
+                default: break;
+            }
+
+            // Ensure minimum size
+            if (r.width < 8) r.width = 8;
+            if (r.height < 8) r.height = 8;
+
+            // Clamp to image bounds
+            r &= cv::Rect(0, 0, state.image.width, state.image.height);
+
+            if (r.width >= 8 && r.height >= 8) {
+                m_controller.set_custom_region(r);
+            }
+
+            if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                cw.is_resizing = false;
+                cw.active_anchor = AnchorPoint::None;
+            }
+        }
+    }
+
+    // === Draw new rect ===
+    if (is_hovered && !cw.is_resizing) {
+        bool start_draw = false;
+
+        if (!cw.has_region && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            start_draw = true;
+        } else if (cw.has_region && io.KeyCtrl && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            AnchorPoint hit = hit_test_anchor(mouse_pos, cw.region);
+            if (hit == AnchorPoint::None) {
+                start_draw = true;
+            }
+        }
+
+        if (start_draw) {
+            cw.is_drawing = true;
+            cw.drag_start = cv::Point(
+                static_cast<int>(std::clamp(image_pos.x, 0.0f, static_cast<float>(state.image.width))),
+                static_cast<int>(std::clamp(image_pos.y, 0.0f, static_cast<float>(state.image.height)))
+            );
+        }
+    }
+
+    if (cw.is_drawing) {
+        int x1 = cw.drag_start.x;
+        int y1 = cw.drag_start.y;
+        int x2 = static_cast<int>(std::clamp(image_pos.x, 0.0f, static_cast<float>(state.image.width)));
+        int y2 = static_cast<int>(std::clamp(image_pos.y, 0.0f, static_cast<float>(state.image.height)));
+
+        int rx = std::min(x1, x2);
+        int ry = std::min(y1, y2);
+        int rw = std::abs(x2 - x1);
+        int rh = std::abs(y2 - y1);
+
+        if (rw >= 4 && rh >= 4) {
+            cv::Rect new_rect(rx, ry, rw, rh);
+            cw.region = new_rect;
+            cw.has_region = true;
+            m_controller.set_custom_region(new_rect);
+        }
+
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            cw.is_drawing = false;
+            if (rw < 4 || rh < 4) {
+                cw.has_region = false;
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Input handling
+// =============================================================================
+
 void ImagePreview::handle_input(const ImVec2& viewport_size, float content_w, float content_h) {
     auto& state = m_controller.state();
     auto& opts = state.preview_options;
 
     ImGuiIO& io = ImGui::GetIO();
 
-    // Check if this child window is hovered (use RootAndChildWindows for better detection)
     bool is_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 
-    // Mouse wheel zoom (works when hovered)
+    // Mouse wheel zoom
     if (is_hovered && io.MouseWheel != 0 && !io.KeyShift) {
         float zoom_delta = io.MouseWheel * 0.1f;
         opts.zoom = std::clamp(opts.zoom + zoom_delta * opts.zoom, 0.1f, 10.0f);
@@ -178,7 +494,11 @@ void ImagePreview::handle_input(const ImVec2& viewport_size, float content_w, fl
     bool left_down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
     bool middle_down = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
 
-    bool pan_active = is_hovered && (
+    // In custom mode, don't pan with plain left-click
+    bool is_custom_interacting = (state.process_options.size_mode == WatermarkSizeMode::Custom) &&
+                                  (state.custom_watermark.is_drawing || state.custom_watermark.is_resizing);
+
+    bool pan_active = is_hovered && !is_custom_interacting && (
         middle_down ||
         (space_held && left_down) ||
         (io.KeyAlt && left_down)
@@ -187,7 +507,6 @@ void ImagePreview::handle_input(const ImVec2& viewport_size, float content_w, fl
     if (pan_active) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
 
-        // Use mouse delta for smooth panning
         ImVec2 delta = io.MouseDelta;
         if (delta.x != 0 || delta.y != 0) {
             float max_scroll_x = std::max(0.0f, content_w - viewport_size.x);
@@ -205,8 +524,9 @@ void ImagePreview::handle_input(const ImVec2& viewport_size, float content_w, fl
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
 
-    // Double-click to reset view
-    if (is_hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !space_held) {
+    // Double-click to reset view (not in custom mode interaction)
+    if (is_hovered && !is_custom_interacting &&
+        ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !space_held) {
         opts.reset_view();
         ImGui::SetScrollX(0);
         ImGui::SetScrollY(0);

@@ -210,6 +210,108 @@ cv::Mat& WatermarkEngine::get_alpha_map(WatermarkSize size) {
     return (size == WatermarkSize::Small) ? alpha_map_small_ : alpha_map_large_;
 }
 
+cv::Mat WatermarkEngine::create_interpolated_alpha(int target_width, int target_height) {
+    // Use 96x96 large alpha map as source (higher resolution = better quality)
+    const cv::Mat& source = alpha_map_large_;
+    
+    if (target_width == source.cols && target_height == source.rows) {
+        return source.clone();
+    }
+    
+    cv::Mat interpolated;
+    
+    // Use INTER_LINEAR (bilinear) for upscaling, INTER_AREA for downscaling
+    int interp_method = (target_width > source.cols || target_height > source.rows)
+                        ? cv::INTER_LINEAR
+                        : cv::INTER_AREA;
+    
+    cv::resize(source, interpolated, cv::Size(target_width, target_height), 0, 0, interp_method);
+    
+    spdlog::debug("Created interpolated alpha map: {}x{} -> {}x{} (method: {})",
+                  source.cols, source.rows, target_width, target_height,
+                  interp_method == cv::INTER_LINEAR ? "bilinear" : "area");
+    
+    return interpolated;
+}
+
+void WatermarkEngine::remove_watermark_custom(
+    cv::Mat& image,
+    const cv::Rect& region)
+{
+    if (image.empty()) {
+        throw std::runtime_error("Empty image provided");
+    }
+    
+    // Ensure BGR format
+    if (image.channels() == 4) {
+        cv::cvtColor(image, image, cv::COLOR_BGRA2BGR);
+    } else if (image.channels() == 1) {
+        cv::cvtColor(image, image, cv::COLOR_GRAY2BGR);
+    }
+    
+    // Check for exact match with standard sizes
+    if (region.width == 48 && region.height == 48) {
+        spdlog::info("Custom region matches 48x48, using small alpha map");
+        cv::Point pos(region.x, region.y);
+        remove_watermark_alpha_blend(image, alpha_map_small_, pos, logo_value_);
+        return;
+    }
+    
+    if (region.width == 96 && region.height == 96) {
+        spdlog::info("Custom region matches 96x96, using large alpha map");
+        cv::Point pos(region.x, region.y);
+        remove_watermark_alpha_blend(image, alpha_map_large_, pos, logo_value_);
+        return;
+    }
+    
+    // Create interpolated alpha map for custom size
+    cv::Mat custom_alpha = create_interpolated_alpha(region.width, region.height);
+    cv::Point pos(region.x, region.y);
+    
+    spdlog::info("Removing watermark at ({},{}) with custom {}x{} alpha map",
+                 pos.x, pos.y, region.width, region.height);
+    
+    remove_watermark_alpha_blend(image, custom_alpha, pos, logo_value_);
+}
+
+void WatermarkEngine::add_watermark_custom(
+    cv::Mat& image,
+    const cv::Rect& region)
+{
+    if (image.empty()) {
+        throw std::runtime_error("Empty image provided");
+    }
+    
+    // Ensure BGR format
+    if (image.channels() == 4) {
+        cv::cvtColor(image, image, cv::COLOR_BGRA2BGR);
+    } else if (image.channels() == 1) {
+        cv::cvtColor(image, image, cv::COLOR_GRAY2BGR);
+    }
+    
+    // Check for exact match with standard sizes
+    if (region.width == 48 && region.height == 48) {
+        cv::Point pos(region.x, region.y);
+        add_watermark_alpha_blend(image, alpha_map_small_, pos, logo_value_);
+        return;
+    }
+    
+    if (region.width == 96 && region.height == 96) {
+        cv::Point pos(region.x, region.y);
+        add_watermark_alpha_blend(image, alpha_map_large_, pos, logo_value_);
+        return;
+    }
+    
+    // Create interpolated alpha map for custom size
+    cv::Mat custom_alpha = create_interpolated_alpha(region.width, region.height);
+    cv::Point pos(region.x, region.y);
+    
+    spdlog::info("Adding watermark at ({},{}) with custom {}x{} alpha map",
+                 pos.x, pos.y, region.width, region.height);
+    
+    add_watermark_alpha_blend(image, custom_alpha, pos, logo_value_);
+}
+
 bool process_image(
     const std::filesystem::path& input_path,
     const std::filesystem::path& output_path,

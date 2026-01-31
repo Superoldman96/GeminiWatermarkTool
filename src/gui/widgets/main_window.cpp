@@ -14,6 +14,7 @@
 
 #include <spdlog/spdlog.h>
 #include <fmt/core.h>
+#include <algorithm>
 
 namespace gwt::gui {
 
@@ -139,16 +140,23 @@ void MainWindow::render() {
     render_menu_bar();
     render_toolbar();
 
-    // Main content area with control panel and image
-    float control_panel_width = 350.0f * scale;
+    // Calculate status bar height (same formula as render_status_bar)
+    float status_bar_height = ImGui::GetFrameHeight() + 8.0f * scale;
 
-    ImGui::BeginChild("ControlPanel", ImVec2(control_panel_width, 0), true);
+    // Calculate content height (available space minus status bar)
+    float content_height = ImGui::GetContentRegionAvail().y - status_bar_height;
+    content_height = std::max(1.0f, content_height);
+
+    // Main content area with control panel and image
+    float control_panel_width = 240.0f * scale;
+
+    ImGui::BeginChild("ControlPanel", ImVec2(control_panel_width, content_height), true);
     render_control_panel();
     ImGui::EndChild();
 
     ImGui::SameLine();
 
-    ImGui::BeginChild("ImageArea", ImVec2(0, 0), true);
+    ImGui::BeginChild("ImageArea", ImVec2(0, content_height), true);
     render_image_area();
     ImGui::EndChild();
 
@@ -178,7 +186,6 @@ bool MainWindow::handle_event(const SDL_Event& event) {
                 case SDLK_O: action_open_file(); return true;
                 case SDLK_S: action_save_file(); return true;
                 case SDLK_W: action_close_file(); return true;
-                case SDLK_R: action_process(); return true;
                 case SDLK_Z: action_revert(); return true;
                 case SDLK_EQUALS: action_zoom_in(); return true;
                 case SDLK_MINUS: action_zoom_out(); return true;
@@ -189,9 +196,12 @@ bool MainWindow::handle_event(const SDL_Event& event) {
             switch (event.key.key) {
                 case SDLK_S: action_save_file_as(); return true;
             }
-        } else {
+        } else if (!ctrl && !shift) {
+            // Single key shortcuts (no modifiers)
             switch (event.key.key) {
-                case SDLK_SPACE: action_toggle_preview(); return true;
+                case SDLK_X: action_process(); return true;
+                case SDLK_V: action_toggle_preview(); return true;
+                case SDLK_Z: action_revert(); return true;
             }
         }
     }
@@ -240,17 +250,17 @@ void MainWindow::render_menu_bar() {
         }
 
         if (ImGui::BeginMenu("Edit")) {
-            if (ImGui::MenuItem("Process", "Ctrl+R", false, m_controller.state().can_process())) {
+            if (ImGui::MenuItem("Process", "X", false, m_controller.state().can_process())) {
                 action_process();
             }
-            if (ImGui::MenuItem("Revert", "Ctrl+Z", false, m_controller.state().image.has_processed())) {
+            if (ImGui::MenuItem("Revert", "Z", false, m_controller.state().image.has_processed())) {
                 action_revert();
             }
             ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("View")) {
-            if (ImGui::MenuItem("Toggle Preview", "Space", false, m_controller.state().image.has_processed())) {
+            if (ImGui::MenuItem("Compare Original", "V", false, m_controller.state().image.has_processed())) {
                 action_toggle_preview();
             }
             ImGui::Separator();
@@ -318,7 +328,7 @@ void MainWindow::render_toolbar() {
     ImGui::SameLine();
 
     ImGui::BeginDisabled(!m_controller.state().image.has_processed());
-    if (ImGui::Button("Toggle")) {
+    if (ImGui::Button("Compare")) {
         action_toggle_preview();
     }
     ImGui::EndDisabled();
@@ -346,24 +356,55 @@ void MainWindow::render_control_panel() {
     ImGui::Text("Watermark Size");
     ImGui::Separator();
 
-    // Size selection
-    int size_option = 0;  // 0=Auto, 1=Small, 2=Large
-    if (!state.process_options.force_size) {
-        size_option = 0;
-    } else if (*state.process_options.force_size == WatermarkSize::Small) {
-        size_option = 1;
-    } else {
-        size_option = 2;
-    }
+    // Size selection using WatermarkSizeMode
+    auto& opts = state.process_options;
+    int size_option = static_cast<int>(opts.size_mode);
 
     if (ImGui::RadioButton("Auto Detect", size_option == 0)) {
-        m_controller.set_force_size(std::nullopt);
+        m_controller.set_size_mode(WatermarkSizeMode::Auto);
     }
     if (ImGui::RadioButton("48x48 (Small)", size_option == 1)) {
-        m_controller.set_force_size(WatermarkSize::Small);
+        m_controller.set_size_mode(WatermarkSizeMode::Small);
     }
     if (ImGui::RadioButton("96x96 (Large)", size_option == 2)) {
-        m_controller.set_force_size(WatermarkSize::Large);
+        m_controller.set_size_mode(WatermarkSizeMode::Large);
+    }
+    if (ImGui::RadioButton("Custom", size_option == 3)) {
+        m_controller.set_size_mode(WatermarkSizeMode::Custom);
+    }
+
+    // Custom mode controls
+    if (opts.size_mode == WatermarkSizeMode::Custom && state.image.has_image()) {
+        ImGui::Indent();
+
+        if (state.custom_watermark.has_region) {
+            // Re-detect button
+            if (ImGui::SmallButton("Re-detect")) {
+                state.custom_watermark.detection_attempted = false;
+                m_controller.detect_custom_watermark();
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset")) {
+                state.custom_watermark.clear();
+                m_controller.detect_custom_watermark();
+            }
+
+            // Show confidence
+            if (state.custom_watermark.detection_confidence > 0.0f) {
+                ImGui::TextColored(
+                    ImVec4(0.3f, 0.8f, 0.3f, 1.0f),
+                    "Confidence: %.0f%%",
+                    state.custom_watermark.detection_confidence * 100.0f);
+            } else {
+                ImGui::TextColored(
+                    ImVec4(0.8f, 0.6f, 0.2f, 1.0f),
+                    "Fallback position");
+            }
+        } else {
+            ImGui::TextWrapped("Draw a rectangle on the preview to mark the watermark region.");
+        }
+
+        ImGui::Unindent();
     }
 
     // Show detected info
@@ -374,7 +415,16 @@ void MainWindow::render_control_panel() {
 
         const auto& info = *state.watermark_info;
         ImGui::Text("Size: %dx%d", info.width(), info.height());
-        ImGui::Text("Position: (%d, %d)", info.position.x, info.position.y);
+        ImGui::Text("Position:");
+        ImGui::Text("  (%d, %d)", info.position.x, info.position.y);
+
+        if (info.is_custom) {
+            ImGui::Text("Region:");
+            ImGui::Text("  (%d,%d)-(%d,%d)",
+                       info.region.x, info.region.y,
+                       info.region.x + info.region.width,
+                       info.region.y + info.region.height);
+        }
     }
 
     ImGui::Spacing();
@@ -417,6 +467,19 @@ void MainWindow::render_control_panel() {
         action_process();
     }
     ImGui::EndDisabled();
+
+    // Tips section
+    ImGui::Spacing();
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Shortcuts");
+    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "X       Process image");
+    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "V       Compare original");
+    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Z      Revert to original");
+    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Space  Pan (hold + drag)");
+    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Alt    Pan (hold + drag)");
+    ImGui::Separator();
+    ImGui::Text("");
 }
 
 void MainWindow::render_image_area() {
@@ -434,7 +497,7 @@ void MainWindow::render_status_bar() {
         ImGuiWindowFlags_NoSavedSettings;
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    float height = ImGui::GetFrameHeight() + 8.0f * scale;
+    float height = ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.y * scale;
 
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - height));
     ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, height));

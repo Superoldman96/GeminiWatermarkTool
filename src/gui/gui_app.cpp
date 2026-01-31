@@ -19,8 +19,10 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
+#include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace gwt::gui {
 
@@ -28,7 +30,9 @@ namespace {
 
 // Window settings
 constexpr int kDefaultWidth = 1600;
-constexpr int kDefaultHeight = 1200;
+constexpr int kDefaultHeight = 1250;
+constexpr int kMinWidth = 1030;
+constexpr int kMinHeight = 888;
 constexpr const char* kWindowTitle = "Gemini Watermark Tool";
 
 // Parse backend type from command line
@@ -49,7 +53,12 @@ int run(int argc, char** argv) {
     // Setup logging
     auto logger = spdlog::stdout_color_mt("gwt-gui");
     spdlog::set_default_logger(logger);
+
+#if defined(DEBUG) || defined(_DEBUG)
     spdlog::set_level(spdlog::level::debug);
+#else
+    spdlog::set_level(spdlog::level::info);
+#endif
 
     spdlog::info("Starting Gemini Watermark Tool GUI v{}", APP_VERSION);
 
@@ -96,6 +105,10 @@ int run(int argc, char** argv) {
         return 1;
     }
 
+    // Set minimum window size
+    SDL_SetWindowMinimumSize(window, kMinWidth, kMinHeight);
+    spdlog::info("Window minimum size: {}x{}", kMinWidth, kMinHeight);
+
     // Initialize backend with window
     if (!backend->init(window)) {
         spdlog::error("Failed to initialize backend: {}", to_string(backend->last_error()));
@@ -132,16 +145,136 @@ int run(int argc, char** argv) {
     float base_font_size = 16.0f;
     float scaled_font_size = base_font_size * dpi_scale;
 
-    // Load default font with scaled size
+    // Clear existing fonts
     io.Fonts->Clear();
 
-    // Or load a better font if available
+    // =========================================================================
+    // Font Loading Strategy:
+    // 1. Try Noto Sans CJK (best cross-platform CJK support)
+    // 2. Try system fonts (Windows: Microsoft YaHei/JhengHei, macOS: PingFang)
+    // 3. Fallback to ImGui default font (no CJK support)
+    // =========================================================================
+
+    // Define font search paths for each platform
+    std::vector<std::string> font_paths;
+    std::string windir;
+
+#ifdef _WIN32
+    char* buf = nullptr;
+    size_t size = 0;
+    if (_dupenv_s(&buf, &size, "WINDIR") == 0 && buf != nullptr) {
+        windir = buf;
+        free(buf);
+    }
+
+    // Windows font paths
+    std::string fonts_dir = windir.empty() ? "C:\\Windows\\Fonts\\" : windir + "\\Fonts\\";
+
+    font_paths = {
+        // Noto Sans CJK (if installed)
+        fonts_dir + "NotoSansCJK-Regular.ttc",
+        fonts_dir + "NotoSansCJKtc-Regular.otf",
+        fonts_dir + "NotoSansCJKsc-Regular.otf",
+        // Microsoft JhengHei (Traditional Chinese, Windows Vista+)
+        fonts_dir + "msjh.ttc",
+        fonts_dir + "msjhl.ttc",
+        // Microsoft YaHei (Simplified Chinese, Windows Vista+)
+        fonts_dir + "msyh.ttc",
+        fonts_dir + "msyhl.ttc",
+        // Yu Gothic (Japanese, Windows 8.1+)
+        fonts_dir + "YuGothM.ttc",
+        // Malgun Gothic (Korean, Windows Vista+)
+        fonts_dir + "malgun.ttf",
+        // Segoe UI (general fallback)
+        fonts_dir + "segoeui.ttf",
+    };
+#elif __APPLE__
+    // macOS font paths
+    font_paths = {
+        // Noto Sans CJK (if installed via Homebrew)
+        "/opt/homebrew/share/fonts/NotoSansCJK-Regular.ttc",
+        "/usr/local/share/fonts/NotoSansCJK-Regular.ttc",
+        // PingFang (macOS 10.11+)
+        "/System/Library/Fonts/PingFang.ttc",
+        // Hiragino Sans (Japanese)
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        // SF Pro (general)
+        "/System/Library/Fonts/SFNS.ttf",
+    };
+#else
+    // Linux font paths
+    font_paths = {
+        // Noto Sans CJK (common locations)
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        // WenQuanYi (common Chinese font on Linux)
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+        // DejaVu Sans (fallback)
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    };
+#endif
+
+    // Font configuration
     ImFontConfig font_config;
     font_config.SizePixels = scaled_font_size;
     font_config.OversampleH = 2;
     font_config.OversampleV = 1;
-    io.Fonts->AddFontDefault(&font_config);
+    font_config.PixelSnapH = true;
 
+    // Glyph ranges for CJK support
+    // Use full Chinese range to support both Simplified and Traditional
+    static const ImWchar glyph_ranges[] = {
+        0x0020, 0x00FF,  // Basic Latin + Latin Supplement
+        0x2000, 0x206F,  // General Punctuation
+        0x3000, 0x30FF,  // CJK Symbols and Punctuation, Hiragana, Katakana
+        0x31F0, 0x31FF,  // Katakana Phonetic Extensions
+        0xFF00, 0xFFEF,  // Half-width and Full-width Forms
+        0x4E00, 0x9FAF,  // CJK Unified Ideographs
+        0x3400, 0x4DBF,  // CJK Unified Ideographs Extension A
+        0,
+    };
+
+    // Try to load fonts
+    ImFont* loaded_font = nullptr;
+    std::string loaded_font_name;
+
+    for (const auto& font_path : font_paths) {
+        if (std::filesystem::exists(font_path)) {
+            spdlog::info("Trying font: {}", font_path);
+
+            // if non pixel font, we plus 2 to size to make it visually similar
+            scaled_font_size += 2 * dpi_scale;
+            font_config.SizePixels = scaled_font_size;
+
+            loaded_font = io.Fonts->AddFontFromFileTTF(
+                font_path.c_str(),
+                scaled_font_size,
+                &font_config,
+                glyph_ranges
+            );
+
+            if (loaded_font) {
+                loaded_font_name = font_path;
+                spdlog::info("Loaded font: {}", font_path);
+                break;
+            } else {
+                spdlog::warn("Failed to load font: {}", font_path);
+            }
+        }
+    }
+
+    // Fallback to default font if no CJK font found
+    if (!loaded_font) {
+        spdlog::warn("No CJK font found, using default font (CJK characters will not display)");
+        io.Fonts->AddFontDefault(&font_config);
+    }
+
+    // Build font atlas
+    io.Fonts->Build();
+    spdlog::info("Font atlas built successfully");
     // Scale ImGui style
     ImGuiStyle& style = ImGui::GetStyle();
     style.ScaleAllSizes(dpi_scale);
@@ -154,7 +287,48 @@ int run(int argc, char** argv) {
 
     // Create controller and main window
     AppController controller(*backend);
+    controller.state().dpi_scale = dpi_scale;  // Store for widgets to use
     MainWindow main_window(controller);
+
+    // Structure to pass to event watch callback
+    struct RenderContext {
+        IRenderBackend* backend;
+        MainWindow* main_window;
+        SDL_Window* window;
+    };
+
+    RenderContext render_ctx{backend.get(), &main_window, window};
+
+    // Event watch callback - called during Windows modal resize loop
+    auto event_watch = [](void* userdata, SDL_Event* event) -> bool {
+        auto* ctx = static_cast<RenderContext*>(userdata);
+
+        if (event->type == SDL_EVENT_WINDOW_RESIZED ||
+            event->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
+            event->type == SDL_EVENT_WINDOW_EXPOSED) {
+
+            // Update backend size
+            if (event->type == SDL_EVENT_WINDOW_RESIZED ||
+                event->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+                ctx->backend->on_resize(event->window.data1, event->window.data2);
+            }
+
+            // Render frame immediately
+            ctx->backend->begin_frame();
+            ctx->backend->imgui_new_frame();
+            ImGui::NewFrame();
+            ctx->main_window->render();
+            ImGui::Render();
+            ctx->backend->imgui_render();
+            ctx->backend->end_frame();
+            ctx->backend->present();
+        }
+
+        return true;  // Allow event to be added to queue
+    };
+
+    // Register event watch for live resize on Windows
+    SDL_AddEventWatch(event_watch, &render_ctx);
 
     // Load file from command line if provided
     for (int i = 1; i < argc; ++i) {
@@ -170,6 +344,7 @@ int run(int argc, char** argv) {
 
     // Main loop
     bool running = true;
+
     while (running) {
         // Process events
         SDL_Event event;
@@ -189,6 +364,8 @@ int run(int argc, char** argv) {
                     break;
 
                 case SDL_EVENT_WINDOW_RESIZED:
+                case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+                    // Resize is handled in event watch callback
                     backend->on_resize(event.window.data1, event.window.data2);
                     break;
 
@@ -199,20 +376,19 @@ int run(int argc, char** argv) {
             }
         }
 
-        // Begin frame
+        // Render frame
         backend->begin_frame();
         backend->imgui_new_frame();
         ImGui::NewFrame();
-
-        // Render UI
         main_window.render();
-
-        // End frame
         ImGui::Render();
         backend->imgui_render();
         backend->end_frame();
         backend->present();
     }
+
+    // Remove event watch before cleanup
+    SDL_RemoveEventWatch(event_watch, &render_ctx);
 
     // Cleanup
     spdlog::info("Shutting down...");

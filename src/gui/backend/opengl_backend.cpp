@@ -85,8 +85,8 @@ bool OpenGLBackend::init(SDL_Window* window) {
     }
 #endif
 
-    // Get window size
-    SDL_GetWindowSize(window, &m_window_width, &m_window_height);
+    // Get window size in pixels (for HiDPI support)
+    SDL_GetWindowSizeInPixels(window, &m_window_width, &m_window_height);
 
     // Log OpenGL info
     spdlog::info("OpenGL initialized:");
@@ -162,6 +162,12 @@ void OpenGLBackend::imgui_render() {
 // =============================================================================
 
 void OpenGLBackend::begin_frame() {
+    // Get current drawable size (ensures correct viewport during resize)
+    int drawable_w, drawable_h;
+    SDL_GetWindowSizeInPixels(m_window, &drawable_w, &drawable_h);
+    m_window_width = drawable_w;
+    m_window_height = drawable_h;
+    
     // Set viewport
     glViewport(0, 0, m_window_width, m_window_height);
     
@@ -179,9 +185,13 @@ void OpenGLBackend::present() {
 }
 
 void OpenGLBackend::on_resize(int width, int height) {
-    m_window_width = width;
-    m_window_height = height;
-    glViewport(0, 0, width, height);
+    // Get actual drawable size (may differ from window size on HiDPI)
+    int drawable_w = width, drawable_h = height;
+    SDL_GetWindowSizeInPixels(m_window, &drawable_w, &drawable_h);
+    
+    m_window_width = drawable_w;
+    m_window_height = drawable_h;
+    glViewport(0, 0, drawable_w, drawable_h);
 }
 
 // =============================================================================

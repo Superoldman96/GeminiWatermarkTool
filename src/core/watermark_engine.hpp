@@ -102,6 +102,17 @@ public:
     );
 
     /**
+     * Remove watermark from a custom region with interpolated alpha map
+     *
+     * @param image     The image to process (will be modified in-place)
+     * @param region    Custom watermark region (position + size)
+     */
+    void remove_watermark_custom(
+        cv::Mat& image,
+        const cv::Rect& region
+    );
+
+    /**
      * Add watermark to an image (Gemini-style)
      *
      * @param image     The image to process (will be modified in-place)
@@ -112,12 +123,33 @@ public:
         std::optional<WatermarkSize> force_size = std::nullopt
     );
 
+    /**
+     * Add watermark at a custom region with interpolated alpha map
+     *
+     * @param image     The image to process (will be modified in-place)
+     * @param region    Custom watermark region (position + size)
+     */
+    void add_watermark_custom(
+        cv::Mat& image,
+        const cv::Rect& region
+    );
+
 private:
     cv::Mat alpha_map_small_;   // 48x48 alpha map (CV_32FC1, 0.0-1.0)
     cv::Mat alpha_map_large_;   // 96x96 alpha map (CV_32FC1, 0.0-1.0)
     float logo_value_;          // Logo brightness (255 = white)
 
     cv::Mat& get_alpha_map(WatermarkSize size);
+    
+    /**
+     * Create an interpolated alpha map for a custom size
+     * Uses bilinear interpolation from the 96x96 alpha map
+     *
+     * @param target_width   Target width
+     * @param target_height  Target height
+     * @return               Interpolated alpha map (CV_32FC1)
+     */
+    cv::Mat create_interpolated_alpha(int target_width, int target_height);
 
     // Helper to initialize alpha maps from cv::Mat
     void init_alpha_maps(const cv::Mat& bg_small, const cv::Mat& bg_large);

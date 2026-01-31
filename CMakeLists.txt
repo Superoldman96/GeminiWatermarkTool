@@ -174,11 +174,13 @@ endif()
 set(CORE_SOURCES
     src/core/watermark_engine.cpp
     src/core/blend_modes.cpp
+    src/core/watermark_detector.cpp
 )
 
 set(CORE_HEADERS
     src/core/watermark_engine.hpp
     src/core/blend_modes.hpp
+    src/core/watermark_detector.hpp
     src/core/types.hpp
 )
 

@@ -106,6 +106,24 @@ public:
     void set_force_size(std::optional<WatermarkSize> size);
     
     /**
+     * Set watermark size mode (Auto/Small/Large/Custom)
+     * @param mode  The size mode
+     */
+    void set_size_mode(WatermarkSizeMode mode);
+    
+    /**
+     * Set custom watermark region
+     * @param region  The custom region in image pixel coordinates
+     */
+    void set_custom_region(const cv::Rect& region);
+    
+    /**
+     * Run auto-detection for custom watermark mode
+     * Detects the most likely watermark position using OpenCV analysis
+     */
+    void detect_custom_watermark();
+    
+    /**
      * Toggle between original and processed preview
      */
     void toggle_preview();
