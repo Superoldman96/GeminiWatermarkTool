@@ -5,7 +5,7 @@
  * @license MIT
  *
  * @details
- * Defines the interface for render backends (OpenGL, Vulkan).
+ * Defines the interface for render backends (OpenGL, D3D11, Vulkan).
  * Allows GUI to be decoupled from specific graphics API.
  */
 
@@ -89,6 +89,9 @@ struct TextureDesc {
 
 enum class BackendType {
     OpenGL,
+#if defined(_WIN32)
+    D3D11,
+#endif
 #if defined(GWT_HAS_VULKAN)
     Vulkan,
 #endif
@@ -98,6 +101,9 @@ enum class BackendType {
 [[nodiscard]] constexpr std::string_view to_string(BackendType type) noexcept {
     switch (type) {
         case BackendType::OpenGL: return "OpenGL";
+#if defined(_WIN32)
+        case BackendType::D3D11:  return "D3D11";
+#endif
 #if defined(GWT_HAS_VULKAN)
         case BackendType::Vulkan: return "Vulkan";
 #endif
@@ -256,7 +262,9 @@ protected:
 
 /**
  * Create a render backend
- * @param type  Backend type (Auto will try Vulkan first if available)
+ * @param type  Backend type (Auto will select best available for platform)
+ *              Windows: D3D11 > OpenGL
+ *              Linux/macOS: OpenGL (Vulkan if enabled)
  * @return      Unique pointer to backend instance
  */
 [[nodiscard]] std::unique_ptr<IRenderBackend>

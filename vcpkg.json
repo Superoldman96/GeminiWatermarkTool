@@ -1,6 +1,6 @@
 {
   "name": "gemini-watermark-tool",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A tool to add/remove Gemini-style visible watermarks using reverse alpha blending",
   "homepage": "https://github.com/allenk/GeminiWatermarkTool",
   "license": "MIT",
@@ -29,6 +29,18 @@
         "implot",
         "glad",
         "nativefiledialog-extended"
+      ]
+    },
+    "d3d11": {
+      "description": "Add Direct3D 11 backend support (Windows only, requires gui feature)",
+      "supports": "windows",
+      "dependencies": [
+        "wil",
+        {
+          "name": "imgui",
+          "default-features": false,
+          "features": [ "dx11-binding" ]
+        }
       ]
     },
     "vulkan": {

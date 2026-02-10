@@ -68,6 +68,30 @@ The desktop GUI provides an interactive workflow for both single-image and batch
 | Space / Alt | Pan (hold + drag) |
 | Ctrl+W | Close / exit batch mode |
 
+### Render Backends (Windows)
+
+The GUI supports multiple render backends for maximum compatibility:
+
+| Backend | Description | Use Case |
+|---------|-------------|----------|
+| **D3D11** (default) | Direct3D 11 with WARP fallback | Best for Windows — works in Hyper-V, Docker, RDP |
+| **OpenGL** | OpenGL 3.3 Core | Cross-platform, requires GPU drivers |
+
+**Why D3D11?**
+- Native Windows API — no additional drivers needed
+- **WARP fallback** — software rendering when no GPU available
+- Works in **Hyper-V**, **Docker**, **Remote Desktop**, and other virtualized environments
+- Better stability in Windows sandbox configurations
+
+```bash
+# Auto-select (D3D11 on Windows, OpenGL elsewhere)
+GeminiWatermarkTool
+
+# Force specific backend
+GeminiWatermarkTool --backend=d3d11
+GeminiWatermarkTool --backend=opengl
+```
+
 ## CLI — What's New
 
 In addition to the GUI, the command line has been significantly enhanced.
@@ -383,11 +407,13 @@ cmake --build --preset android-arm64-Release
 
 ### Build Presets
 
-| Preset | Platform | Mode |
-|--------|----------|------|
-| `windows-x64-Release` | Windows | Normal |
-| `linux-x64-Release` | Linux | Normal |
-| `android-arm64-Release` | Android | Normal |
+| Preset | Platform | Backend | Notes |
+|--------|----------|---------|-------|
+| `windows-x64-Release` | Windows | D3D11 + OpenGL | Default, best compatibility |
+| `windows-x64-OpenGL-Release` | Windows | OpenGL only | For GPU-accelerated OpenGL |
+| `linux-x64-Release` | Linux | OpenGL | — |
+| `mac-universal-Release` | macOS | OpenGL | Intel + Apple Silicon |
+| `android-arm64-Release` | Android | — | CLI only |
 
 ### Manual Build (without presets)
 
@@ -412,12 +438,17 @@ gemini-watermark-tool/
 ├── src/
 │   ├── core/                   # Core engine (CLI + GUI shared)
 │   │   ├── watermark_engine.hpp/cpp
+│   │   ├── watermark_detector.hpp/cpp
 │   │   ├── blend_modes.hpp/cpp
-│   │   ├── image_processing.hpp/cpp
-│   │   └── ascii_logo.hpp
-│   ├── cli/                    # CLI entry point
-│   │   └── main.cpp
+│   │   └── types.hpp
+│   ├── cli/                    # CLI application
+│   │   └── cli_app.hpp/cpp
+│   ├── utils/                  # Utilities
+│   │   ├── ascii_logo.hpp
+│   │   └── path_formatter.hpp
+│   ├── main.cpp                # Entry point (CLI/GUI dispatcher)
 │   └── gui/                    # Desktop GUI (ImGui + SDL3)
+│       ├── gui_app.hpp/cpp           # GUI entry point
 │       ├── app/
 │       │   ├── app_state.hpp         # Application state
 │       │   └── app_controller.hpp/cpp # Logic controller
@@ -425,7 +456,9 @@ gemini-watermark-tool/
 │       │   ├── main_window.hpp/cpp   # Main window + menus
 │       │   └── image_preview.hpp/cpp # Image viewer + batch view
 │       ├── backend/
-│       │   └── render_backend.hpp/cpp # OpenGL texture management
+│       │   ├── render_backend.hpp/cpp  # Backend interface + factory
+│       │   ├── opengl_backend.hpp/cpp  # OpenGL 3.3 implementation
+│       │   └── d3d11_backend.hpp/cpp   # Direct3D 11 implementation (Windows)
 │       └── resources/
 │           └── style.hpp             # Theme and layout constants
 ├── report/
@@ -448,7 +481,9 @@ All dependencies are managed via vcpkg and statically linked:
 | SDL3 | Window management and input (GUI) |
 | Dear ImGui | Immediate mode GUI framework (GUI) |
 | ImPlot | Plotting widgets (GUI) |
+| glad | OpenGL loader (GUI) |
 | nativefiledialog-extended | Native file dialogs (GUI) |
+| WIL | Windows Implementation Libraries (D3D11 backend, Windows only) |
 
 ---
 

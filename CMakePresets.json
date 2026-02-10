@@ -34,7 +34,8 @@
         "VCPKG_TARGET_TRIPLET": "x64-windows-static",
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
         "BUILD_GUI": "ON",
-        "VCPKG_MANIFEST_FEATURES": "gui"
+        "ENABLE_D3D11": "ON",
+        "VCPKG_MANIFEST_FEATURES": "gui;d3d11"
       },
       "generator": "Ninja"
     },
@@ -46,7 +47,8 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDebug",
         "BUILD_GUI": "ON",
-        "VCPKG_MANIFEST_FEATURES": "gui"
+        "ENABLE_D3D11": "ON",
+        "VCPKG_MANIFEST_FEATURES": "gui;d3d11"
       }
     },
     {
@@ -56,6 +58,30 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "BUILD_GUI": "ON",
+        "ENABLE_D3D11": "ON",
+        "VCPKG_MANIFEST_FEATURES": "gui;d3d11"
+      }
+    },
+    {
+      "name": "windows-x64-OpenGL-Debug",
+      "displayName": "Windows x64 OpenGL Only Debug",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDebug",
+        "BUILD_GUI": "ON",
+        "ENABLE_D3D11": "OFF",
+        "VCPKG_MANIFEST_FEATURES": "gui"
+      }
+    },
+    {
+      "name": "windows-x64-OpenGL-Release",
+      "displayName": "Windows x64 OpenGL Only Release",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_GUI": "ON",
+        "ENABLE_D3D11": "OFF",
         "VCPKG_MANIFEST_FEATURES": "gui"
       }
     },
@@ -175,6 +201,14 @@
     {
       "name": "windows-x64-Release",
       "configurePreset": "windows-x64-Release"
+    },
+    {
+      "name": "windows-x64-OpenGL-Debug",
+      "configurePreset": "windows-x64-OpenGL-Debug"
+    },
+    {
+      "name": "windows-x64-OpenGL-Release",
+      "configurePreset": "windows-x64-OpenGL-Release"
     },
 
     {

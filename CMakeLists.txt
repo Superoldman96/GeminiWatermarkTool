@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(GeminiWatermarkTool VERSION 0.2.0 LANGUAGES CXX)
+project(GeminiWatermarkTool VERSION 0.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,9 +9,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Build Options
 # =============================================================================
 option(BUILD_GUI "Build with ImGui GUI support" OFF)
+option(ENABLE_D3D11 "Enable Direct3D 11 backend (Windows only, requires BUILD_GUI)" OFF)
 option(ENABLE_VULKAN "Enable Vulkan backend (requires BUILD_GUI)" OFF)
 
 # Validate options
+if(ENABLE_D3D11 AND NOT BUILD_GUI)
+    message(FATAL_ERROR "ENABLE_D3D11 requires BUILD_GUI=ON")
+endif()
+
+if(ENABLE_D3D11 AND NOT WIN32)
+    message(FATAL_ERROR "ENABLE_D3D11 is only supported on Windows")
+endif()
+
 if(ENABLE_VULKAN AND NOT BUILD_GUI)
     message(FATAL_ERROR "ENABLE_VULKAN requires BUILD_GUI=ON")
 endif()
@@ -165,6 +174,8 @@ if(BUILD_GUI)
         find_package(Vulkan REQUIRED)
         find_package(VulkanMemoryAllocator CONFIG REQUIRED)
     endif()
+
+    # D3D11 uses Windows SDK, no additional find_package needed
 endif()
 # =============================================================================
 # Source Files
@@ -226,6 +237,17 @@ if(BUILD_GUI)
         src/gui/resources/style.hpp
     )
 
+    # D3D11 backend (Windows only)
+    if(ENABLE_D3D11)
+        list(APPEND GUI_SOURCES
+            src/gui/backend/d3d11_backend.cpp
+        )
+        list(APPEND GUI_HEADERS
+            src/gui/backend/d3d11_backend.hpp
+        )
+    endif()
+
+    # Vulkan backend
     if(ENABLE_VULKAN)
         list(APPEND GUI_SOURCES
             src/gui/backend/vulkan_backend.cpp
@@ -284,6 +306,14 @@ if(BUILD_GUI)
         nfd::nfd
     )
 
+    # D3D11 system libraries (Windows SDK)
+    if(ENABLE_D3D11)
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+            d3d11
+            dxgi
+        )
+    endif()
+
     if(ENABLE_VULKAN)
         target_link_libraries(${PROJECT_NAME} PRIVATE
             Vulkan::Vulkan
@@ -304,6 +334,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     APP_VERSION="${PROJECT_VERSION}"
     APP_NAME="${PROJECT_NAME}"
     $<$<BOOL:${BUILD_GUI}>:GWT_HAS_GUI=1>
+    $<$<BOOL:${ENABLE_D3D11}>:GWT_HAS_D3D11=1>
     $<$<BOOL:${ENABLE_VULKAN}>:GWT_HAS_VULKAN=1>
 )
 
@@ -338,6 +369,7 @@ message(STATUS "  BUILD_GUI: ${BUILD_GUI}")
 message(STATUS "  OPENGL_FOUND: ${OPENGL_FOUND}")
 message(STATUS "  OPENGL_opengl_LIBRARY: ${OPENGL_opengl_LIBRARY}")
 message(STATUS "  OPENGL_glx_LIBRARY: ${OPENGL_glx_LIBRARY}")
+message(STATUS "  ENABLE_D3D11: ${ENABLE_D3D11}")
 message(STATUS "  ENABLE_VULKAN: ${ENABLE_VULKAN}")
 if(APPLE)
     message(STATUS "")
@@ -352,4 +384,3 @@ if(ANDROID)
     message(STATUS "  Platform: ${ANDROID_PLATFORM}")
 endif()
 message(STATUS "=============================================")
-

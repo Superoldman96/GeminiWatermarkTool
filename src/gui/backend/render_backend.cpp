@@ -8,6 +8,10 @@
 #include "gui/backend/render_backend.hpp"
 #include "gui/backend/opengl_backend.hpp"
 
+#if defined(_WIN32)
+#include "gui/backend/d3d11_backend.hpp"
+#endif
+
 #if defined(GWT_HAS_VULKAN)
 #include "gui/backend/vulkan_backend.hpp"
 #endif
@@ -17,14 +21,22 @@
 namespace gwt::gui {
 
 std::unique_ptr<IRenderBackend> create_backend(BackendType type) {
-    // Auto mode: try backends in order of preference
+    // Auto mode: try backends in order of preference (platform-specific)
     if (type == BackendType::Auto) {
+#if defined(_WIN32)
+        // Windows: prefer D3D11 for better VM/RDP compatibility
+        if (is_backend_available(BackendType::D3D11)) {
+            spdlog::info("Auto-selecting D3D11 backend");
+            return std::make_unique<D3D11Backend>();
+        }
+        spdlog::debug("D3D11 not available, trying OpenGL");
+#endif
+
 #if defined(GWT_HAS_VULKAN)
-        // Try Vulkan first
+        // Try Vulkan if enabled
         if (is_backend_available(BackendType::Vulkan)) {
             spdlog::info("Auto-selecting Vulkan backend");
-            auto backend = std::make_unique<VulkanBackend>();
-            return backend;
+            return std::make_unique<VulkanBackend>();
         }
         spdlog::debug("Vulkan not available, trying OpenGL");
 #endif
@@ -37,6 +49,12 @@ std::unique_ptr<IRenderBackend> create_backend(BackendType type) {
         case BackendType::OpenGL:
             spdlog::info("Creating OpenGL backend");
             return std::make_unique<OpenGLBackend>();
+
+#if defined(_WIN32)
+        case BackendType::D3D11:
+            spdlog::info("Creating D3D11 backend");
+            return std::make_unique<D3D11Backend>();
+#endif
 
 #if defined(GWT_HAS_VULKAN)
         case BackendType::Vulkan:
@@ -55,6 +73,12 @@ bool is_backend_available(BackendType type) noexcept {
         case BackendType::OpenGL:
             // OpenGL is always available (compiled in)
             return true;
+
+#if defined(_WIN32)
+        case BackendType::D3D11:
+            // Check if D3D11 runtime is available
+            return D3D11Backend::is_available();
+#endif
 
 #if defined(GWT_HAS_VULKAN)
         case BackendType::Vulkan:
