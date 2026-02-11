@@ -313,6 +313,20 @@ ImVec2 ImagePreview::screen_to_image(float sx, float sy) const {
 }
 
 // =============================================================================
+// Outlined text for readability on any background
+// =============================================================================
+
+void ImagePreview::draw_outlined_text(ImDrawList* dl, const ImVec2& pos, ImU32 color,
+                                       const char* text, ImU32 outline_color) {
+    // 4-directional 1px outline (standard technique used by video players / game UI)
+    dl->AddText(ImVec2(pos.x - 1, pos.y), outline_color, text);
+    dl->AddText(ImVec2(pos.x + 1, pos.y), outline_color, text);
+    dl->AddText(ImVec2(pos.x, pos.y - 1), outline_color, text);
+    dl->AddText(ImVec2(pos.x, pos.y + 1), outline_color, text);
+    dl->AddText(pos, color, text);  // foreground on top
+}
+
+// =============================================================================
 // Main render
 // =============================================================================
 
@@ -337,13 +351,74 @@ void ImagePreview::render_image() {
 
     // Get actual viewport size INSIDE the child window (accounts for scrollbar)
     ImVec2 viewport_size = ImGui::GetContentRegionAvail();
+    ImVec2 child_pos = ImGui::GetWindowPos();
+    ImGuiIO& io = ImGui::GetIO();
 
     // Base scale: fit to actual viewport (no extra space)
     float scale_x = viewport_size.x / img_w;
     float scale_y = viewport_size.y / img_h;
     float base_scale = std::min(scale_x, scale_y);
 
-    // Apply zoom
+    // =========================================================================
+    // Zoom input — handled BEFORE layout so everything is computed with the
+    // final zoom value in the SAME frame. No pending/deferred scroll needed.
+    //
+    // Two zoom sources:
+    // 1. Mouse wheel: pivot = mouse cursor position
+    // 2. External (buttons/shortcuts changed opts.zoom): pivot = viewport center
+    // =========================================================================
+    bool zoom_changed = false;
+    ImVec2 zoom_pivot_image{0, 0};
+    ImVec2 zoom_mouse_local{0, 0};
+
+    bool is_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+
+    if (is_hovered && io.MouseWheel != 0 && !io.KeyShift) {
+        float old_zoom = opts.zoom;
+        float zoom_delta = io.MouseWheel * 0.1f;
+        float new_zoom = std::clamp(old_zoom + zoom_delta * old_zoom, 0.1f, 10.0f);
+
+        if (new_zoom != old_zoom) {
+            // Compute pivot in image coordinates using CURRENT scale
+            ImVec2 mouse = io.MousePos;
+            ImVec2 pivot = screen_to_image(mouse.x, mouse.y);
+
+            // If mouse is outside image bounds, use image center as pivot
+            if (pivot.x < 0 || pivot.x > img_w || pivot.y < 0 || pivot.y > img_h) {
+                pivot = ImVec2(img_w * 0.5f, img_h * 0.5f);
+            }
+
+            zoom_pivot_image = pivot;
+            zoom_mouse_local = ImVec2(mouse.x - child_pos.x, mouse.y - child_pos.y);
+            zoom_changed = true;
+            opts.zoom = new_zoom;
+        }
+    }
+
+    // Detect external zoom changes (buttons, keyboard shortcuts)
+    // These change opts.zoom outside render_image(), so we detect via m_last_zoom.
+    if (!zoom_changed && opts.zoom != m_last_zoom && m_final_scale > 1e-6f) {
+        // Pivot = center of current viewport (in image coordinates)
+        float viewport_cx = child_pos.x + viewport_size.x * 0.5f;
+        float viewport_cy = child_pos.y + viewport_size.y * 0.5f;
+        zoom_pivot_image = screen_to_image(viewport_cx, viewport_cy);
+
+        // Clamp to image bounds; if outside, use image center
+        if (zoom_pivot_image.x < 0 || zoom_pivot_image.x > img_w ||
+            zoom_pivot_image.y < 0 || zoom_pivot_image.y > img_h) {
+            zoom_pivot_image = ImVec2(img_w * 0.5f, img_h * 0.5f);
+        }
+
+        // "Mouse" is viewport center
+        zoom_mouse_local = ImVec2(viewport_size.x * 0.5f, viewport_size.y * 0.5f);
+        zoom_changed = true;
+    }
+
+    m_last_zoom = opts.zoom;
+
+    // =========================================================================
+    // Layout — uses final zoom (including any change from this frame)
+    // =========================================================================
     m_final_scale = base_scale * opts.zoom;
     float display_w = img_w * m_final_scale;
     float display_h = img_h * m_final_scale;
@@ -360,12 +435,35 @@ void ImagePreview::render_image() {
     float image_x = (content_w - display_w) * 0.5f;
     float image_y = (content_h - display_h) * 0.5f;
 
-    // Get scroll offset
-    float scroll_x = ImGui::GetScrollX();
-    float scroll_y = ImGui::GetScrollY();
+    // =========================================================================
+    // Scroll — if zoom just changed, compute scroll that keeps the pivot under
+    // the mouse cursor. Otherwise use ImGui's current scroll state.
+    // This avoids the 1-frame lag of SetScrollX/SetScrollY (which only update
+    // GetScrollX on the NEXT frame via ScrollTarget → Scroll).
+    // =========================================================================
+    float scroll_x, scroll_y;
+
+    if (zoom_changed) {
+        // Pivot position in new content coordinate space
+        float pivot_cx = image_x + zoom_pivot_image.x * m_final_scale;
+        float pivot_cy = image_y + zoom_pivot_image.y * m_final_scale;
+
+        // Scroll that places pivot at mouse position
+        float max_scroll_x = std::max(0.0f, content_w - viewport_size.x);
+        float max_scroll_y = std::max(0.0f, content_h - viewport_size.y);
+
+        scroll_x = std::clamp(pivot_cx - zoom_mouse_local.x, 0.0f, max_scroll_x);
+        scroll_y = std::clamp(pivot_cy - zoom_mouse_local.y, 0.0f, max_scroll_y);
+
+        // Sync ImGui's scroll state for next frame (scrollbar display, pan, etc.)
+        ImGui::SetScrollX(scroll_x);
+        ImGui::SetScrollY(scroll_y);
+    } else {
+        scroll_x = ImGui::GetScrollX();
+        scroll_y = ImGui::GetScrollY();
+    }
 
     // Calculate screen position and cache for coordinate conversion
-    ImVec2 child_pos = ImGui::GetWindowPos();
     m_image_screen_pos = ImVec2(
         child_pos.x + image_x - scroll_x,
         child_pos.y + image_y - scroll_y
@@ -381,51 +479,59 @@ void ImagePreview::render_image() {
         ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE
     );
 
-    // Draw watermark overlay
+    // Hold "C" to temporarily hide all region overlays (for clean preview).
+    // Use WantTextInput (not WantCaptureKeyboard) — the latter is always true
+    // when NavEnableKeyboard is set and any ImGui window has focus.
+    bool hide_overlays = !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_C);
+
+    // Draw watermark overlay (unless hidden by "C" key)
     bool is_custom_mode = (state.process_options.size_mode == WatermarkSizeMode::Custom);
 
-    if (is_custom_mode && state.custom_watermark.has_region) {
-        // Custom mode: draw resizable rect with anchors
-        draw_custom_rect_with_anchors(draw_list);
-    } else if (opts.highlight_watermark && state.watermark_info) {
-        // Standard mode: draw simple highlight rect
-        const auto& info = *state.watermark_info;
+    if (!hide_overlays) {
+        if (is_custom_mode && state.custom_watermark.has_region) {
+            // Custom mode: draw resizable rect with anchors
+            draw_custom_rect_with_anchors(draw_list);
+        } else if (opts.highlight_watermark && state.watermark_info) {
+            // Standard mode: draw simple highlight rect
+            const auto& info = *state.watermark_info;
 
-        ImVec2 wm_tl = image_to_screen(
-            static_cast<float>(info.position.x),
-            static_cast<float>(info.position.y));
-        ImVec2 wm_br = image_to_screen(
-            static_cast<float>(info.position.x + info.width()),
-            static_cast<float>(info.position.y + info.height()));
+            ImVec2 wm_tl = image_to_screen(
+                static_cast<float>(info.position.x),
+                static_cast<float>(info.position.y));
+            ImVec2 wm_br = image_to_screen(
+                static_cast<float>(info.position.x + info.width()),
+                static_cast<float>(info.position.y + info.height()));
 
-        ImU32 color = opts.show_processed
-            ? IM_COL32(0, 255, 0, 180)
-            : IM_COL32(255, 100, 100, 180);
+            ImU32 color = opts.show_processed
+                ? IM_COL32(0, 255, 0, 180)
+                : IM_COL32(255, 100, 100, 180);
 
-        draw_list->AddRect(wm_tl, wm_br, color, 0, 0, 2.0f);
+            draw_list->AddRect(wm_tl, wm_br, color, 0, 0, 2.0f);
 
-        const char* label = opts.show_processed ? "Removed" : "Watermark";
-        draw_list->AddText(
-            ImVec2(wm_tl.x, wm_tl.y - ImGui::GetTextLineHeight() - 2),
-            color, label
-        );
+            const char* label = opts.show_processed ? "Removed" : "Watermark";
+            draw_outlined_text(draw_list,
+                ImVec2(wm_tl.x, wm_tl.y - ImGui::GetTextLineHeight() - 2),
+                color, label);
+        }
     }
 
-    // Handle input
+    // Handle input (pan, arrow keys — zoom is handled above)
     handle_input(viewport_size, content_w, content_h);
 
     // Handle custom rect interaction (must be after handle_input for pan priority)
-    if (is_custom_mode) {
+    // Disabled while overlays are hidden — don't interact with invisible elements
+    if (is_custom_mode && !hide_overlays) {
         handle_custom_rect_interaction();
     }
 
     ImGui::EndChild();
 
-    // Draw info overlay on top
+    // Draw info overlay on top (always visible, not affected by "C" key)
     ImGui::SetCursorScreenPos(ImVec2(viewport_start.x + 5, viewport_start.y + 5));
-    ImGui::Text("%.0f%% | %s",
+    ImGui::Text("%.0f%% | %s%s",
                 opts.zoom * 100.0f,
-                opts.show_processed ? "Processed" : "Original");
+                opts.show_processed ? "Processed" : "Original",
+                hide_overlays ? " | [C] Overlay Hidden" : "");
 }
 
 // =============================================================================
@@ -466,20 +572,18 @@ void ImagePreview::draw_custom_rect_with_anchors(ImDrawList* draw_list) {
 
     // Label
     const char* label = "Custom Watermark";
-    draw_list->AddText(
+    draw_outlined_text(draw_list,
         ImVec2(tl.x, tl.y - ImGui::GetTextLineHeight() - 2),
-        rect_color, label
-    );
+        rect_color, label);
 
     // Size label inside
     char size_text[64];
     snprintf(size_text, sizeof(size_text), "%dx%d", cr.width, cr.height);
     ImVec2 size_text_sz = ImGui::CalcTextSize(size_text);
-    draw_list->AddText(
+    draw_outlined_text(draw_list,
         ImVec2((tl.x + br.x - size_text_sz.x) * 0.5f,
                (tl.y + br.y - size_text_sz.y) * 0.5f),
-        IM_COL32(255, 255, 255, 200), size_text
-    );
+        IM_COL32(255, 255, 255, 240), size_text);
 
     // Don't draw anchors while actively drawing
     if (state.custom_watermark.is_drawing) return;
@@ -717,11 +821,8 @@ void ImagePreview::handle_input(const ImVec2& viewport_size, float content_w, fl
 
     bool is_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 
-    // Mouse wheel zoom
-    if (is_hovered && io.MouseWheel != 0 && !io.KeyShift) {
-        float zoom_delta = io.MouseWheel * 0.1f;
-        opts.zoom = std::clamp(opts.zoom + zoom_delta * opts.zoom, 0.1f, 10.0f);
-    }
+    // Note: Zoom (mouse wheel) is handled in render_image() before layout
+    // to avoid 1-frame scroll lag. Only pan and keyboard input here.
 
     // Pan with Space + left mouse drag, middle mouse, or Alt + left mouse
     bool space_held = ImGui::IsKeyDown(ImGuiKey_Space);

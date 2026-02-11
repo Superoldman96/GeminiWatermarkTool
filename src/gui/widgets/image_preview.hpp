@@ -34,6 +34,9 @@ private:
     float m_final_scale{1.0f};
     ImVec2 m_image_screen_pos{0, 0};
 
+    // Track zoom to detect external changes (buttons, keyboard shortcuts)
+    float m_last_zoom{1.0f};
+
     void render_image();
     void render_placeholder();
     void render_batch_view();
@@ -47,6 +50,11 @@ private:
     ImVec2 image_to_screen(float ix, float iy) const;
     ImVec2 screen_to_image(float sx, float sy) const;
     AnchorPoint hit_test_anchor(const ImVec2& mouse_pos, const cv::Rect& rect) const;
+
+    // Draw text with outline for readability on any background
+    static void draw_outlined_text(ImDrawList* dl, const ImVec2& pos, ImU32 color,
+                                   const char* text,
+                                   ImU32 outline_color = IM_COL32(0, 0, 0, 220));
 };
 
 }  // namespace gwt::gui

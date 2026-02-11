@@ -765,9 +765,13 @@ void MainWindow::render_control_panel() {
         row("X", "Process image");
         row("V", "Compare original");
         row("Z", "Revert to original");
+        row("C (hold)", "Hide overlay");
         row("W A S D", "Move selected region");
         row("Space", "Pan (hold + drag)");
         row("Alt", "Pan (hold + drag)");
+        row("Ctrl +/-", "Zoom in/out");
+        row("Ctrl 0", "Zoom fit");
+        row("Scroll", "Zoom to cursor");
 
         ImGui::EndTable();
     }
