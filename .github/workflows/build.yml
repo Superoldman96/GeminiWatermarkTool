@@ -147,6 +147,11 @@ jobs:
         lipo -create build-x64/GeminiWatermarkTool build-arm64/GeminiWatermarkTool -output GeminiWatermarkTool
         strip GeminiWatermarkTool
 
+    - name: Ad-hoc code sign
+      run: |
+        codesign --force --deep -s - GeminiWatermarkTool
+        codesign -vv GeminiWatermarkTool
+
     - name: Test binary
       run: ./GeminiWatermarkTool --version
 

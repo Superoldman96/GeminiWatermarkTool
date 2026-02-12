@@ -109,37 +109,52 @@ int run(int argc, char** argv) {
         return 1;
     }
 
-    // Set minimum window size
-    SDL_SetWindowMinimumSize(window, kMinWidth, kMinHeight);
-    spdlog::info("Window minimum size: {}x{}", kMinWidth, kMinHeight);
-
-    // Clamp window size to usable screen area (avoid window larger than display)
+    // Set minimum window size (capped to display bounds for small screens)
     {
         int display_index = SDL_GetDisplayForWindow(window);
         SDL_Rect display_bounds;
-        
+
+        int effective_min_w = kMinWidth;
+        int effective_min_h = kMinHeight;
+
         if (display_index >= 0 && SDL_GetDisplayUsableBounds(display_index, &display_bounds)) {
+            // On small displays (e.g. MacBook 1280x800), ensure minimum doesn't
+            // exceed the screen. Leave margin for menu bar / taskbar / dock.
+            int screen_max_w = static_cast<int>(display_bounds.w * 0.95f);
+            int screen_max_h = static_cast<int>(display_bounds.h * 0.95f);
+
+            effective_min_w = std::min(kMinWidth, screen_max_w);
+            effective_min_h = std::min(kMinHeight, screen_max_h);
+
+            spdlog::info("Display usable: {}x{}, effective min: {}x{}",
+                         display_bounds.w, display_bounds.h,
+                         effective_min_w, effective_min_h);
+
+            // Clamp window size: min ≤ actual ≤ max
+            // (guaranteed: effective_min ≤ screen_max, so clamp is well-defined)
             int current_w, current_h;
             SDL_GetWindowSize(window, &current_w, &current_h);
-            
-            // Use 95% of screen as max to leave some margin for taskbar etc.
-            int max_w = static_cast<int>(display_bounds.w * 0.95f);
-            int max_h = static_cast<int>(display_bounds.h * 0.95f);
-            
-            // Also respect minimum size
-            int actual_w = std::clamp(current_w, kMinWidth, max_w);
-            int actual_h = std::clamp(current_h, kMinHeight, max_h);
-            
-            // Only resize if needed
+
+            int actual_w = std::clamp(current_w, effective_min_w, screen_max_w);
+            int actual_h = std::clamp(current_h, effective_min_h, screen_max_h);
+
             if (actual_w != current_w || actual_h != current_h) {
-                SDL_SetWindowSize(window, actual_w, actual_h);
-                spdlog::info("Window clamped to {}x{} (screen usable: {}x{})",
-                             actual_w, actual_h, display_bounds.w, display_bounds.h);
+                spdlog::info("Window clamped: {}x{} -> {}x{}",
+                             current_w, current_h, actual_w, actual_h);
             }
-            
+
+            // Set minimum BEFORE resizing (SDL enforces minimum on SetWindowSize)
+            SDL_SetWindowMinimumSize(window, effective_min_w, effective_min_h);
+            SDL_SetWindowSize(window, actual_w, actual_h);
+
             // Center window on screen
             SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        } else {
+            // Fallback: no display info, use defaults
+            SDL_SetWindowMinimumSize(window, effective_min_w, effective_min_h);
         }
+
+        spdlog::info("Window minimum size: {}x{}", effective_min_w, effective_min_h);
     }
 
     // Initialize backend with window

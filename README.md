@@ -64,8 +64,12 @@ The desktop GUI provides an interactive workflow for both single-image and batch
 | X | Process image |
 | V | Compare with original |
 | Z | Revert to original |
+| C (hold) | Hide overlay |
 | W A S D | Move custom watermark region |
 | Space / Alt | Pan (hold + drag) |
+| Scroll | Zoom to cursor |
+| Ctrl +/- | Zoom in / out |
+| Ctrl 0 | Zoom fit |
 | Ctrl+W | Close / exit batch mode |
 
 ### Render Backends (Windows)
@@ -209,6 +213,43 @@ Download the latest release from the [Releases](https://github.com/allenk/Gemini
 | Linux | `GeminiWatermarkTool-Linux-x64` | x64 |
 | macOS | `GeminiWatermarkTool-macOS-Universal` | Intel + Apple Silicon |
 | Android | `GeminiWatermarkTool-Android-arm64` | ARM64 |
+
+### First Run — OS Security Prompts
+
+Downloaded binaries are not code-signed, so your OS may show a security warning on first launch. This is normal for open-source software distributed outside app stores.
+
+<details>
+<summary><b>macOS</b> — "Apple cannot check it for malicious software"</summary>
+
+**Option A (recommended):** Right-click the binary → **Open** → click **Open** in the dialog. You only need to do this once.
+
+**Option B (terminal):**
+```bash
+xattr -dr com.apple.quarantine GeminiWatermarkTool
+chmod +x GeminiWatermarkTool
+```
+</details>
+
+<details>
+<summary><b>Windows</b> — SmartScreen "Windows protected your PC"</summary>
+
+**Option A:** Click **More info** → **Run anyway**.
+
+**Option B (PowerShell):**
+```powershell
+Unblock-File .\GeminiWatermarkTool.exe
+```
+</details>
+
+<details>
+<summary><b>Linux</b> — No security prompt</summary>
+
+Linux does not quarantine downloaded binaries. Just ensure the file is executable:
+```bash
+chmod +x GeminiWatermarkTool
+./GeminiWatermarkTool
+```
+</details>
 
 ## ⚠️ Disclaimer
 
